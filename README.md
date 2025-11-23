@@ -13,7 +13,7 @@ A beautiful, touch-enabled weather station for the ESP32-2432S028R board (common
 *   **Touch Interface**: 
     *   Tap the city name to search/change the city using an on-screen keyboard.
     *   Calibration button for accurate touch response.
-*   **Custom Backgrounds**: Loads high-quality JPEG backgrounds from a micro SD card.
+*   **Custom Backgrounds**: Loads high-quality JPEG backgrounds from a micro SD card. Currently supports **480 x 270** resolution.
 *   **WiFi Connectivity**: Automatically connects to WiFi and updates data every 10 minutes.
 *   **Persistent Settings**: Remembers your city and touch calibration even after power loss.
 
@@ -58,7 +58,7 @@ For the CYD (ESP32-2432S028R dual usb), use these settings:
 ### 2. Prepare the SD Card
 1.  Format your Micro SD card to **FAT32**.
 2.  Open the `sd card files` folder in this repository.
-3.  Copy the file `day-aero-fit.JPG` directly to the **root** of your SD card.
+3.  Copy the file `day-aero-fit.JPG` directly to the **root** of your SD card. (Note: If using your own images, ensure they are **480 x 270** pixels).
 4.  Insert the SD card into the slot on the ESP32 board.
 
 ### 3. Get an OpenWeatherMap API Key
