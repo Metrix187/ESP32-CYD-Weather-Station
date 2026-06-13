@@ -1,0 +1,18 @@
+# Private credentials — never commit these
+secrets.h
+**/secrets.h
+
+# Arduino / arduino-cli build output
+/build/
+**/build/
+*.bin
+*.elf
+*.hex
+*.map
+*.d.o
+*.a
+
+# Editor / OS cruft
+.vscode/
+.DS_Store
+Thumbs.db
