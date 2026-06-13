@@ -46,28 +46,27 @@ using fs::FS; // compatibility alias required by some WebServer versions
 // =========================================================================
 //                          USER CONFIGURATION
 // =========================================================================
-// SECURITY FIX: Use environment variables or separate config file
-// For now, you should replace these with your actual credentials
+// Credentials live in a separate, gitignored file so they never end up in
+// version control. Copy "secrets.example.h" to "secrets.h" and fill it in.
+#include "secrets.h"
 
-// WiFi Configuration
-const char* ssid = "YOUR_WIFI_SSID";           // Replace with your WiFi SSID
-const char* password = "YOUR_WIFI_PASSWORD";   // Replace with your WiFi password
+// WiFi Configuration (values defined in secrets.h)
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 
-// OpenWeatherMap API Configuration
-// Get your free API key at: https://openweathermap.org/api
-String openWeatherMapApiKey = "YOUR_OPENWEATHERMAP_API_KEY";  // Replace with your OpenWeatherMap API key
-String city = "New York,NY,US";                // Your city name (format: City or City,State or City,State,Country)
-String countryCode = "";                       // Not used if city includes state/country; kept for compatibility
+// OpenWeatherMap API Configuration (values defined in secrets.h)
+String openWeatherMapApiKey = OWM_API_KEY;
+String city = DEFAULT_CITY_NAME;               // Format: City or City,State or City,State,Country
 
 // Display Configuration
-const int UPDATE_INTERVAL = 600000;           // Update interval in milliseconds (10 minutes)
+const int UPDATE_INTERVAL = 600000;            // Weather refresh interval, ms (10 minutes)
 // =========================================================================
 
 // Global objects
 TFT_eSPI tft = TFT_eSPI();
 String weatherData;
 unsigned long lastWeatherUpdateMs = 0;
-const String DEFAULT_CITY = "New York,NY,US";  // Default fallback city
+const String DEFAULT_CITY = DEFAULT_CITY_NAME; // Default fallback city
 
 // =========================================================================
 //                        HARDWARE PIN DEFINITIONS
@@ -91,15 +90,21 @@ Preferences prefs;
 bool lastWifiConnected = false;
 bool sdAvailable = false;
 
+// WiFi reconnect handling (non-blocking, used by loop() when the link drops)
+unsigned long lastReconnectAttemptMs = 0;
+const unsigned long WIFI_RECONNECT_INTERVAL_MS = 10000; // retry every 10s while down
+
 // SD Card (HSPI) Pins for CYD
 static const int SD_MISO_PIN = 19;
 static const int SD_MOSI_PIN = 23;
 static const int SD_SCK_PIN  = 18;
 static const int SD_CS_PIN   = 5;
 
-// Background Image Paths
-static const char* BG_PATH_UPPER = "/day-aero-fit.JPG";
-static const char* BG_PATH_LOWER = "/day-aero-fit.jpg"; // Case insensitive fallback
+// Background Image Paths (day + night variants, each with a case-insensitive fallback)
+static const char* BG_DAY_UPPER   = "/day-aero-fit.JPG";
+static const char* BG_DAY_LOWER   = "/day-aero-fit.jpg";
+static const char* BG_NIGHT_UPPER = "/night-aero-fit.JPG";
+static const char* BG_NIGHT_LOWER = "/night-aero-fit.jpg";
 
 // ---------------------------- Touch & UI State ----------------------------
 // Dedicated touch pins for XPT2046 on this board
@@ -195,11 +200,15 @@ void saveTouchCalibration();
 void ensureTouchCalibration();
 bool waitForTouchSample(uint16_t &rx, uint16_t &ry, uint32_t timeoutMs);
 bool tftJpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap);
-void drawBackground();
+void drawBackground(bool isNight);
+void drawErrorBanner(const String& message);
 
 void setup() {
   Serial.begin(115200);
-  
+
+  // Open persistent storage once for the whole app (city + touch calibration).
+  prefs.begin("weather", false);
+
   tft.init();
   tft.setRotation(3);  // Try 3 if 1 shows sideways; test 0–3
   // Init backlight if controlled via GPIO comes later
@@ -244,8 +253,10 @@ void setup() {
   tft.print("SSID: ");
   tft.println(ssid);
 
+  WiFi.mode(WIFI_STA);
+  WiFi.setAutoReconnect(true);   // let the stack auto-retry; loop() adds a backstop
   WiFi.begin(ssid, password);
-  
+
   // IMPROVED ERROR HANDLING: Add timeout for WiFi connection
   int wifiAttempts = 0;
   const int maxWifiAttempts = 20; // 10 seconds timeout
@@ -275,7 +286,6 @@ void setup() {
   tft.setTextColor(TFT_WHITE, TFT_NAVY);
 
   // Load persisted city (if available)
-  prefs.begin("weather", false);
   {
     String saved = prefs.getString("city", "");
     if (saved.length() > 0) {
@@ -308,6 +318,16 @@ void loop() {
     if (lastWifiConnected) {
       Serial.println("WiFi Disconnected");
       drawWifiDisconnectedScreen();
+      lastReconnectAttemptMs = millis(); // wait one interval before the first retry
+    }
+    // Non-blocking reconnect backstop: nudge the radio every few seconds so the
+    // station recovers on its own instead of staying stuck on the error screen.
+    unsigned long now = millis();
+    if (now - lastReconnectAttemptMs >= WIFI_RECONNECT_INTERVAL_MS) {
+      lastReconnectAttemptMs = now;
+      Serial.println("Attempting WiFi reconnect...");
+      WiFi.disconnect();
+      WiFi.begin(ssid, password);
     }
   }
   lastWifiConnected = nowConnected;
@@ -457,7 +477,13 @@ int drawWrapped(const String& text, int x, int y, int font, int maxWidth) {
 
 // Layout UI to match the wallpaper's visual framing/icons
 void drawWeatherUI(JsonDocument& doc) {
-  drawBackground();
+  // Choose day vs night artwork from the OWM icon code, whose last character is
+  // 'd' for day or 'n' for night (e.g. "04d" / "01n").
+  const char* icon = doc["weather"][0]["icon"] | "01d";
+  size_t iconLen = strlen(icon);
+  bool isNight = (iconLen > 0 && icon[iconLen - 1] == 'n');
+
+  drawBackground(isNight);
 
   // Basic text setup
   tft.setTextDatum(TL_DATUM);
@@ -602,17 +628,15 @@ bool fetchAndDisplay(const String& cityParam, String& errorMessage) {
   weatherData = httpGETRequest(serverPath.c_str());
   if (weatherData == "error") {
     errorMessage = "API request failed";
-    tft.fillScreen(TFT_RED);
-    tft.drawString("API Request Failed", 20, 20, 2);
+    drawErrorBanner("API request failed - retrying soon");
     return false;
   }
 
-  DynamicJsonDocument doc(2048);
+  JsonDocument doc; // ArduinoJson v7: elastic capacity, nothing to outgrow
   DeserializationError error = deserializeJson(doc, weatherData);
   if (error) {
     errorMessage = String("JSON parse failed: ") + error.c_str();
-    tft.fillScreen(TFT_RED);
-    tft.drawString("JSON Parsing Failed", 20, 20, 2);
+    drawErrorBanner(String("JSON error: ") + error.c_str());
     return false;
   }
 
@@ -650,7 +674,7 @@ bool readTouch(int16_t &sx, int16_t &sy) {
 }
 
 void loadTouchCalibration() {
-  prefs.begin("weather", false);
+  // prefs is opened once in setup(); just read here.
   bool ok = prefs.getBool("xpt_ok", false);
   if (!ok) return;
   touchCal.xMin = prefs.getUShort("xpt_xmin", touchCal.xMin);
@@ -759,11 +783,18 @@ bool tftJpgOutput(int16_t x, int16_t y, uint16_t w, uint16_t h, uint16_t* bitmap
   tft.pushImage(x, y, w, h, bitmap);
   return 1;
 }
-void drawBackground() {
+void drawBackground(bool isNight) {
   if (sdAvailable) {
     const char* path = nullptr;
-    if (SD.exists(BG_PATH_UPPER)) path = BG_PATH_UPPER;
-    else if (SD.exists(BG_PATH_LOWER)) path = BG_PATH_LOWER;
+    if (isNight) {
+      // Prefer the night image; fall back to day art if it's missing.
+      if (SD.exists(BG_NIGHT_UPPER)) path = BG_NIGHT_UPPER;
+      else if (SD.exists(BG_NIGHT_LOWER)) path = BG_NIGHT_LOWER;
+    }
+    if (!path) {
+      if (SD.exists(BG_DAY_UPPER)) path = BG_DAY_UPPER;
+      else if (SD.exists(BG_DAY_LOWER)) path = BG_DAY_LOWER;
+    }
     if (path) {
       // Clear once in case JPEG is smaller; then draw at 0,0
       tft.fillScreen(TFT_NAVY);
@@ -820,6 +851,17 @@ void drawWifiDisconnectedScreen() {
   tft.setTextDatum(MC_DATUM);
   tft.setTextColor(TFT_GREEN, TFT_BLACK);
   tft.drawString("wifi disconnected :(", tft.width() / 2, tft.height() / 2, 2);
+  tft.setTextDatum(TL_DATUM);
+}
+
+// Non-destructive error indicator: a thin red strip across the top, leaving the
+// last good weather frame visible underneath instead of wiping the whole screen.
+void drawErrorBanner(const String& message) {
+  const int h = 22;
+  tft.fillRect(0, 0, tft.width(), h, TFT_RED);
+  tft.setTextDatum(ML_DATUM);
+  tft.setTextColor(TFT_WHITE, TFT_RED);
+  tft.drawString(message, 6, h / 2, 2);
   tft.setTextDatum(TL_DATUM);
 }
 

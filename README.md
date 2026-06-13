@@ -13,8 +13,9 @@ A beautiful, touch-enabled weather station for the ESP32-2432S028R board (common
 *   **Touch Interface**: 
     *   Tap the city name to search/change the city using an on-screen keyboard.
     *   Calibration button for accurate touch response.
-*   **Custom Backgrounds**: Loads high-quality JPEG backgrounds from a micro SD card. Currently supports **480 x 270** resolution.
-*   **WiFi Connectivity**: Automatically connects to WiFi and updates data every 10 minutes.
+*   **Day / Night Backgrounds**: Automatically swaps between `day-aero-fit.JPG` and `night-aero-fit.JPG` based on whether it's currently day or night at your location.
+*   **Custom Backgrounds**: Loads high-quality JPEG backgrounds (**480 x 270**) from a micro SD card.
+*   **WiFi Connectivity**: Automatically connects to WiFi, updates data every 10 minutes, and reconnects on its own if the link drops.
 *   **Persistent Settings**: Remembers your city and touch calibration even after power loss.
 
 ## Hardware Required
@@ -30,7 +31,7 @@ You will need the [Arduino IDE](https://www.arduino.cc/en/software) to upload th
 
 1.  **TFT_eSPI** by Bodmer
 2.  **XPT2046_Touchscreen** by Paul Stoffregen
-3.  **ArduinoJson** by Benoit Blanchon
+3.  **ArduinoJson** by Benoit Blanchon (**v7** or newer)
 4.  **TJpg_Decoder** by Bodmer
 
 ## Installation & Setup
@@ -58,7 +59,7 @@ For the CYD (ESP32-2432S028R dual usb), use these settings:
 ### 2. Prepare the SD Card
 1.  Format your Micro SD card to **FAT32**.
 2.  Open the `sd card files` folder in this repository.
-3.  Copy the file `day-aero-fit.JPG` directly to the **root** of your SD card. (Note: If using your own images, ensure they are **480 x 270** pixels).
+3.  Copy **both** `day-aero-fit.JPG` and `night-aero-fit.JPG` to the **root** of your SD card. The day image is shown during the day and the night image after dark. (If using your own images, make them **480 x 270** pixels and keep the same file names. Only the day image is strictly required — night falls back to the day image if it's missing.)
 4.  Insert the SD card into the slot on the ESP32 board.
 
 ### 3. Get an OpenWeatherMap API Key
@@ -66,17 +67,20 @@ For the CYD (ESP32-2432S028R dual usb), use these settings:
 2.  Sign up for a free account.
 3.  Navigate to the "API keys" tab and generate a new key.
 
-### 4. Configure the Code
-Open `ESP32_Weather_Station-touch.ino` and locate the User Configuration section (approx. lines 34-40):
+### 4. Configure Your Credentials
+Credentials are kept out of the main sketch (and out of git) in a `secrets.h` file.
+
+1.  In the `ESP32_Weather_Station-touch` folder, copy `secrets.example.h` to `secrets.h`.
+2.  Open `secrets.h` and fill in your details:
 
 ```cpp
-// WiFi Configuration
-const char* ssid = "YOUR_WIFI_SSID";           // <--- Enter your WiFi Name
-const char* password = "YOUR_WIFI_PASSWORD";   // <--- Enter your WiFi Password
-
-// OpenWeatherMap API Configuration
-String openWeatherMapApiKey = "YOUR_API_KEY";  // <--- Paste your API Key here
+#define WIFI_SSID     "YOUR_WIFI_SSID"              // <- your WiFi name
+#define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"          // <- your WiFi password
+#define OWM_API_KEY   "YOUR_OPENWEATHERMAP_API_KEY" // <- your API key
+#define DEFAULT_CITY_NAME "New York,NY,US"          // <- default city on first boot
 ```
+
+`secrets.h` is listed in `.gitignore`, so your credentials stay on your machine and are never committed.
 
 ### 5. Upload
 1.  Select your board in Arduino IDE (usually "ESP32 Dev Module").
@@ -91,9 +95,11 @@ String openWeatherMapApiKey = "YOUR_API_KEY";  // <--- Paste your API Key here
 
 ## Troubleshooting
 
+*   **Compile error `secrets.h: No such file or directory`**: You skipped step 4 — copy `secrets.example.h` to `secrets.h` and fill it in.
 *   **"SD not detected"**: Ensure the card is FAT32 and fully inserted. Try a different card (some non-standard cards have issues with SPI).
 *   **Screen is White**: Check your `TFT_eSPI` pin configuration in `User_Setup.h`.
 *   **Touch not working**: Ensure you installed the `XPT2046_Touchscreen` library.
+*   **Night background never shows**: Confirm `night-aero-fit.JPG` is in the SD card root. The day/night choice comes from OpenWeatherMap's icon code for your city.
 
 ## Open Source & License
 
